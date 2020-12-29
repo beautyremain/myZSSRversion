@@ -87,12 +87,18 @@ class ZSSR:
         # We keep the input file name to save the output with a similar name. If array was given rather than path
         # then we use default provided by the configs
         self.file_name = input_img if type(input_img) is str else conf.name
-
+    def getResult(self,str):
+        post_processed_output = self.final_test()
+        if self.conf.save_results:
+            sf_str = ''.join('X%.2f' % s for s in self.conf.scale_factors[self.sf_ind])
+            plt.imsave('%s/%s%s_zssr_%s.png' %
+                       (self.conf.result_path, os.path.basename(self.file_name)[:-4],str, sf_str),
+                       post_processed_output, vmin=0, vmax=1)
     def run(self):
         # Run gradually on all scale factors (if only one jump then this loop only happens once)
         for self.sf_ind, (sf, self.kernel) in enumerate(zip(self.conf.scale_factors, self.kernels)):
             # verbose
-            print '** Start training for sf=', sf, ' **'
+            print ('** Start training for sf=', sf, ' **')
 
             # Relative_sf (used when base change is enabled. this is when input is the output of some previous scale)
             if np.isscalar(sf):
@@ -103,28 +109,54 @@ class ZSSR:
             # Initialize network
             self.init_sess(init_weights=self.conf.init_net_for_each_sf)
 
+            straight_test_output = self.final_test(i=1)
+            if self.conf.save_results:
+                sf_str = ''.join('X%.2f' % s for s in self.conf.scale_factors[self.sf_ind])
+                plt.imsave('%s/%s网络测试仅back_zssr_%s.png' %
+                           (self.conf.result_path, os.path.basename(self.file_name)[:-4], sf_str),
+                           straight_test_output, vmin=0, vmax=1)
+            self.getResult('无训练有back')
+
+
+
+            self.conf.back_projection_iters = [0]
+            #self.getResult('无训练无back')
             # Train the network
             self.train()
-
+            self.getResult('有训练无back')
             # Use augmented outputs and back projection to enhance result. Also save the result.
+            self.conf.back_projection_iters=[10]
+            straight_test_output = self.final_test(i=1)
             post_processed_output = self.final_test()
 
             # Keep the results for the next scale factors SR to use as dataset
-            self.hr_fathers_sources.append(post_processed_output)
+            #self.hr_fathers_sources.append(post_processed_output)
 
             # In some cases, the current output becomes the new input. If indicated and if this is the right scale to
             # become the new base input. all of these conditions are checked inside the function.
-            self.base_change()
+            #self.base_change()
 
             # Save the final output if indicated
             if self.conf.save_results:
+
                 sf_str = ''.join('X%.2f' % s for s in self.conf.scale_factors[self.sf_ind])
-                plt.imsave('%s/%s_zssr_%s.png' %
+                plt.imsave('%s/%s有训练有back_zssr_%s.png' %
                            (self.conf.result_path, os.path.basename(self.file_name)[:-4], sf_str),
                            post_processed_output, vmin=0, vmax=1)
+                plt.imsave('%s/%s网络测试有back_zssr_%s.png' %
+                           (self.conf.result_path, os.path.basename(self.file_name)[:-4], sf_str),
+                           straight_test_output, vmin=0, vmax=1)
 
+            self.conf.back_projection_iters = [0]
+            straight_test_output = self.final_test(i=1)
+            if self.conf.save_results:
+
+                sf_str = ''.join('X%.2f' % s for s in self.conf.scale_factors[self.sf_ind])
+                plt.imsave('%s/%s网络测试无back_zssr_%s.png' %
+                           (self.conf.result_path, os.path.basename(self.file_name)[:-4], sf_str),
+                           straight_test_output, vmin=0, vmax=1)
             # verbose
-            print '** Done training for sf=', sf, ' **'
+            print ('** Done training for sf=', sf, ' **')
 
         # Return the final post processed output.
         # noinspection PyUnboundLocalVariable
@@ -236,22 +268,22 @@ class ZSSR:
         if (not (1 + self.iter) % self.conf.learning_rate_policy_check_every
                 and self.iter - self.learning_rate_change_iter_nums[-1] > self.conf.min_iters):
             # noinspection PyTupleAssignmentBalance
-            [slope, _], [[var, _], _] = np.polyfit(self.mse_steps[-(self.conf.learning_rate_slope_range /
-                                                                    self.conf.run_test_every):],
-                                                   self.mse_rec[-(self.conf.learning_rate_slope_range /
-                                                                  self.conf.run_test_every):],
+            [slope, _], [[var, _], _] = np.polyfit(self.mse_steps[int(-(self.conf.learning_rate_slope_range /
+                                                                  int(self.conf.run_test_every))):],
+                                                   self.mse_rec[int(-(self.conf.learning_rate_slope_range /
+                                                                  int(self.conf.run_test_every))):],
                                                    1, cov=True)
 
             # We take the the standard deviation as a measure
             std = np.sqrt(var)
 
             # Verbose
-            print 'slope: ', slope, 'STD: ', std
+            print ('slope: ', slope, 'STD: ', std)
 
             # Determine learning rate maintaining or reduction by the ration between slope and noise
             if -self.conf.learning_rate_change_ratio * slope < std:
                 self.learning_rate /= 10
-                print "learning rate updated: ", self.learning_rate
+                print ("learning rate updated: ", self.learning_rate)
 
                 # Keep track of learning rate changes for plotting purposes
                 self.learning_rate_change_iter_nums.append(self.iter)
@@ -283,8 +315,8 @@ class ZSSR:
 
         # Display test results if indicated
         if self.conf.display_test_results:
-            print 'iteration: ', self.iter, 'reconstruct mse:', self.mse_rec[-1], ', true mse:', (self.mse[-1]
-                                                                                                  if self.mse else None)
+            print ('iteration: ', self.iter, 'reconstruct mse:', self.mse_rec[-1], ', true mse:', (self.mse[-1]
+                                                                                                  if self.mse else None))
 
         # plot losses if needed
         if self.conf.plot_losses:
@@ -292,7 +324,7 @@ class ZSSR:
 
     def train(self):
         # main training loop
-        for self.iter in xrange(self.conf.max_iters):
+        for self.iter in range(self.conf.max_iters):
             # Use augmentation from original input image to create current father.
             # If other scale factors were applied before, their result is also used (hr_fathers_in)
             self.hr_father = random_augment(ims=self.hr_fathers_sources,
@@ -314,7 +346,7 @@ class ZSSR:
 
             # Display info and save weights
             if not self.iter % self.conf.display_every:
-                print 'sf:', self.sf*self.base_sf, ', iteration: ', self.iter, ', loss: ', self.loss[self.iter]
+                print ('sf:', self.sf*self.base_sf, ', iteration: ', self.iter, ', loss: ', self.loss[self.iter])
 
             # Test network
             if self.conf.run_test and (not self.iter % self.conf.run_test_every):
@@ -332,10 +364,12 @@ class ZSSR:
         lr_son = imresize(hr_father, 1.0 / self.sf, kernel=self.kernel)
         return np.clip(lr_son + np.random.randn(*lr_son.shape) * self.conf.noise_std, 0, 1)
 
-    def final_test(self):
+    def final_test(self,i=0):
         # Run over 8 augmentations of input - 4 rotations and mirror (geometric self ensemble)
         outputs = []
-
+        temp=self.input
+        if i == 1:
+            self.input=img.imread(os.path.dirname(__file__)+'/set14/0801down.png')
         # The weird range means we only do it once if output_flip is disabled
         # We need to check if scale factor is symmetric to all dimensions, if not we will do 180 jumps rather than 90
         for k in range(0, 1 + 7 * self.conf.output_flip, 1 + int(self.sf[0] != self.sf[1])):
@@ -367,7 +401,7 @@ class ZSSR:
         # Now we can keep the final result (in grayscale case, colors still need to be added, but we don't care
         # because it is done before saving and for every other purpose we use this result)
         self.final_sr = almost_final_sr
-
+        self.input=temp
         # Add colors to result image in case net was activated only on grayscale
         return self.final_sr
 
@@ -389,7 +423,7 @@ class ZSSR:
                 # Keeping track- this is the index inside the base scales list (provided in the config)
                 self.base_ind += 1
 
-            print 'base changed to %.2f' % self.base_sf
+            print ('base changed to %.2f' % self.base_sf)
 
     def plot(self):
         plots_data, labels = zip(*[(np.array(x), l) for (x, l)
